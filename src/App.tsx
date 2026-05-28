@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -8,34 +8,57 @@ import {
   type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { v4 as uuidv4 } from 'uuid';
-import type { Card, ColumnId } from './types';
+import type { Card, ColumnId, KanbanData } from './types';
 import type { Column as ColumnType } from './types';
-import { loadData, saveData } from './store';
+import {
+  getColumns,
+  fetchCards,
+  createCard,
+  updateCard,
+  deleteCard,
+  moveCard,
+} from './store';
 import { Column } from './components/Column';
 import { CardItem } from './components/Card';
 import { CardModal } from './components/CardModal';
-import type { KanbanData } from './types';
 
 export default function App() {
-  const [data, setData] = useState<KanbanData>(loadData);
+  const [cards, setCards] = useState<Card[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeCard, setActiveCard] = useState<Card | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [targetColumnId, setTargetColumnId] = useState<ColumnId>('todo');
+  const [saving, setSaving] = useState(false);
 
-  const persist = useCallback((newData: KanbanData) => {
-    setData(newData);
-    saveData(newData);
+  const columns: ColumnType[] = getColumns();
+
+  // ─── Load from Supabase ────────────────────────────
+
+  const loadCards = useCallback(async () => {
+    try {
+      setError(null);
+      const data = await fetchCards();
+      setCards(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载失败');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // Sensors: require 4px move before drag starts to avoid accidental drags
+  useEffect(() => {
+    loadCards();
+  }, [loadCards]);
+
+  // Sensors
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } })
   );
 
   const cardsByColumn = (colId: ColumnId): Card[] =>
-    data.cards.filter((c: Card) => c.columnId === colId);
+    cards.filter((c: Card) => c.status === colId);
 
   // ─── Card CRUD ────────────────────────────────────
 
@@ -47,78 +70,129 @@ export default function App() {
 
   const openEdit = (card: Card) => {
     setEditingCard(card);
-    setTargetColumnId(card.columnId);
+    setTargetColumnId(card.status);
     setModalOpen(true);
   };
 
-  const saveCard = (
-    cardData: Omit<Card, 'id' | 'createdAt'> & { id?: string; createdAt?: string }
+  const saveCard = async (
+    cardData: Omit<Card, 'id' | 'createdAt' | 'sortOrder'> & { id?: string; createdAt?: string }
   ) => {
-    if (cardData.id && cardData.createdAt) {
-      // Update existing
-      const updated: Card[] = data.cards.map((c: Card) =>
-        c.id === cardData.id ? { ...c, ...cardData, columnId: targetColumnId } : c
-      );
-      persist({ ...data, cards: updated });
-    } else {
-      // Create new
-      const newCard: Card = {
-        id: uuidv4(),
-        title: cardData.title,
-        description: cardData.description,
-        tags: cardData.tags,
-        dueDate: cardData.dueDate,
-        columnId: targetColumnId,
-        createdAt: new Date().toISOString(),
-      };
-      persist({ ...data, cards: [...data.cards, newCard] });
+    setSaving(true);
+    try {
+      if (cardData.id) {
+        // Update
+        const updated = await updateCard(cardData.id, {
+          title: cardData.title,
+          description: cardData.description,
+          tags: cardData.tags,
+          dueDate: cardData.dueDate,
+          status: targetColumnId,
+        });
+        setCards((prev: Card[]) => prev.map((c: Card) => (c.id === updated.id ? updated : c)));
+      } else {
+        // Create
+        const created = await createCard({
+          title: cardData.title,
+          description: cardData.description,
+          tags: cardData.tags,
+          dueDate: cardData.dueDate,
+          status: targetColumnId,
+        });
+        setCards((prev: Card[]) => [...prev, created]);
+      }
+      setModalOpen(false);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setSaving(false);
     }
-    setModalOpen(false);
   };
 
-  const deleteCard = (id: string) => {
-    persist({ ...data, cards: data.cards.filter((c: Card) => c.id !== id) });
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteCard(id);
+      setCards((prev: Card[]) => prev.filter((c: Card) => c.id !== id));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '删除失败');
+    }
   };
 
   // ─── Drag & Drop ──────────────────────────────────
 
   const handleDragStart = (event: DragStartEvent) => {
-    const card = data.cards.find((c: Card) => c.id === event.active.id);
+    const card = cards.find((c: Card) => c.id === event.active.id);
     if (card) setActiveCard(card);
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent) => {
     setActiveCard(null);
     const { active, over } = event;
     if (!over) return;
 
     const cardId = active.id as string;
-    const card = data.cards.find((c: Card) => c.id === cardId);
+    const card = cards.find((c: Card) => c.id === cardId);
     if (!card) return;
 
     // Determine target column
     let targetCol: ColumnId;
-    // If dropped over a card, move to that card's column
-    const overCard = data.cards.find((c: Card) => c.id === over.id);
+    const overCard = cards.find((c: Card) => c.id === over.id);
     if (overCard) {
-      targetCol = overCard.columnId;
+      targetCol = overCard.status;
     } else if (['todo', 'in-progress', 'done'].includes(over.id as string)) {
       targetCol = over.id as ColumnId;
     } else {
       return;
     }
 
-    if (card.columnId === targetCol) return;
+    if (card.status === targetCol) return;
 
-    const updated: Card[] = data.cards.map((c: Card) =>
-      c.id === cardId ? { ...c, columnId: targetCol } : c
+    // Optimistic update
+    setCards((prev: Card[]) =>
+      prev.map((c: Card) => (c.id === cardId ? { ...c, status: targetCol } : c))
     );
-    persist({ ...data, cards: updated });
+
+    try {
+      await moveCard(cardId, targetCol);
+    } catch {
+      // Revert on failure
+      setCards((prev: Card[]) =>
+        prev.map((c: Card) => (c.id === cardId ? { ...c, status: card.status } : c))
+      );
+    }
   };
 
   const handleDragCancel = () => {
     setActiveCard(null);
   };
+
+  // ─── Render ───────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+          <span className="text-sm text-slate-500">加载中...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200">
+        <div className="text-center">
+          <p className="text-red-500 mb-3">加载失败: {error}</p>
+          <button
+            onClick={loadCards}
+            className="px-4 py-2 text-sm font-medium text-white bg-slate-800 rounded-lg hover:bg-slate-700"
+          >
+            重试
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 to-slate-200">
@@ -129,7 +203,7 @@ export default function App() {
             看板
           </h1>
           <span className="text-sm text-slate-400">
-            {data.cards.length} 个任务
+            {cards.length} 个任务
           </span>
         </div>
       </header>
@@ -143,14 +217,14 @@ export default function App() {
       >
         <main className="max-w-7xl mx-auto px-6 py-8">
           <div className="flex gap-6 items-start overflow-x-auto pb-8">
-            {data.columns.map((col: ColumnType) => (
+            {columns.map((col: ColumnType) => (
               <Column
                 key={col.id}
                 column={col}
                 cards={cardsByColumn(col.id)}
                 onOpenCreate={() => openCreate(col.id)}
                 onOpenEdit={openEdit}
-                onDeleteCard={deleteCard}
+                onDeleteCard={handleDelete}
               />
             ))}
           </div>
@@ -173,6 +247,7 @@ export default function App() {
         onClose={() => setModalOpen(false)}
         onSave={saveCard}
         onColumnChange={setTargetColumnId}
+        saving={saving}
       />
     </div>
   );

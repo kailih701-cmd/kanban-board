@@ -21,8 +21,9 @@ export interface Card {
   title: string;
   description: string;
   tags: Tag[];
-  dueDate: string; // ISO date string or ''
-  columnId: ColumnId;
+  dueDate: string;
+  status: ColumnId;
+  sortOrder: number;
   createdAt: string;
 }
 
@@ -34,6 +35,32 @@ export interface Column {
 export interface KanbanData {
   columns: Column[];
   cards: Card[];
+}
+
+/** Raw row shape returned by the Supabase tasks table. */
+export interface TaskRow {
+  id: string;
+  title: string;
+  description: string;
+  tags: Tag[];
+  due_date: string;
+  status: ColumnId;
+  sort_order: number;
+  created_at: string;
+}
+
+/** Map snake_case DB row → camelCase Card. */
+export function rowToCard(row: TaskRow): Card {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description ?? '',
+    tags: row.tags ?? [],
+    dueDate: row.due_date ?? '',
+    status: row.status,
+    sortOrder: row.sort_order ?? 0,
+    createdAt: row.created_at,
+  };
 }
 
 export const TAG_COLOR_MAP: Record<TagColor, string> = {

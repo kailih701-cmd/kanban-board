@@ -30,7 +30,7 @@ export function CardItem({ card, isDragOverlay, onEdit, onDelete }: CardItemProp
   };
 
   const isOverdue =
-    card.dueDate && new Date(card.dueDate) < new Date() && card.columnId !== 'done';
+    card.dueDate && new Date(card.dueDate) < new Date() && card.status !== 'done';
 
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
