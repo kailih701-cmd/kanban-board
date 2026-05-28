@@ -1,4 +1,4 @@
-import type { KanbanData, Column } from '../types';
+import type { KanbanData, Column } from './types';
 
 const STORAGE_KEY = 'kanban-board-data';
 

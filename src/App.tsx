@@ -10,19 +10,21 @@ import {
 } from '@dnd-kit/core';
 import { v4 as uuidv4 } from 'uuid';
 import type { Card, ColumnId } from './types';
+import type { Column as ColumnType } from './types';
 import { loadData, saveData } from './store';
 import { Column } from './components/Column';
 import { CardItem } from './components/Card';
 import { CardModal } from './components/CardModal';
+import type { KanbanData } from './types';
 
 export default function App() {
-  const [data, setData] = useState(loadData);
+  const [data, setData] = useState<KanbanData>(loadData);
   const [activeCard, setActiveCard] = useState<Card | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [targetColumnId, setTargetColumnId] = useState<ColumnId>('todo');
 
-  const persist = useCallback((newData: typeof data) => {
+  const persist = useCallback((newData: KanbanData) => {
     setData(newData);
     saveData(newData);
   }, []);
@@ -32,8 +34,8 @@ export default function App() {
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } })
   );
 
-  const cardsByColumn = (colId: ColumnId) =>
-    data.cards.filter((c) => c.columnId === colId);
+  const cardsByColumn = (colId: ColumnId): Card[] =>
+    data.cards.filter((c: Card) => c.columnId === colId);
 
   // ─── Card CRUD ────────────────────────────────────
 
@@ -49,10 +51,12 @@ export default function App() {
     setModalOpen(true);
   };
 
-  const saveCard = (cardData: Omit<Card, 'id' | 'createdAt'> & { id?: string; createdAt?: string }) => {
+  const saveCard = (
+    cardData: Omit<Card, 'id' | 'createdAt'> & { id?: string; createdAt?: string }
+  ) => {
     if (cardData.id && cardData.createdAt) {
       // Update existing
-      const updated = data.cards.map((c) =>
+      const updated: Card[] = data.cards.map((c: Card) =>
         c.id === cardData.id ? { ...c, ...cardData, columnId: targetColumnId } : c
       );
       persist({ ...data, cards: updated });
@@ -73,13 +77,13 @@ export default function App() {
   };
 
   const deleteCard = (id: string) => {
-    persist({ ...data, cards: data.cards.filter((c) => c.id !== id) });
+    persist({ ...data, cards: data.cards.filter((c: Card) => c.id !== id) });
   };
 
   // ─── Drag & Drop ──────────────────────────────────
 
   const handleDragStart = (event: DragStartEvent) => {
-    const card = data.cards.find((c) => c.id === event.active.id);
+    const card = data.cards.find((c: Card) => c.id === event.active.id);
     if (card) setActiveCard(card);
   };
 
@@ -89,13 +93,13 @@ export default function App() {
     if (!over) return;
 
     const cardId = active.id as string;
-    const card = data.cards.find((c) => c.id === cardId);
+    const card = data.cards.find((c: Card) => c.id === cardId);
     if (!card) return;
 
     // Determine target column
     let targetCol: ColumnId;
     // If dropped over a card, move to that card's column
-    const overCard = data.cards.find((c) => c.id === over.id);
+    const overCard = data.cards.find((c: Card) => c.id === over.id);
     if (overCard) {
       targetCol = overCard.columnId;
     } else if (['todo', 'in-progress', 'done'].includes(over.id as string)) {
@@ -106,7 +110,7 @@ export default function App() {
 
     if (card.columnId === targetCol) return;
 
-    const updated = data.cards.map((c) =>
+    const updated: Card[] = data.cards.map((c: Card) =>
       c.id === cardId ? { ...c, columnId: targetCol } : c
     );
     persist({ ...data, cards: updated });
@@ -139,7 +143,7 @@ export default function App() {
       >
         <main className="max-w-7xl mx-auto px-6 py-8">
           <div className="flex gap-6 items-start overflow-x-auto pb-8">
-            {data.columns.map((col) => (
+            {data.columns.map((col: ColumnType) => (
               <Column
                 key={col.id}
                 column={col}
